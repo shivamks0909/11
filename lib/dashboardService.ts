@@ -271,8 +271,31 @@ export const dashboardService = {
     async deleteSupplier(id: string): Promise<{ error: any }> {
         const supabase = await createAdminClient()
         if (!supabase) return { error: { message: 'Supabase not configured' } }
+
+        // 1. Remove project links first to avoid FK constraint errors
+        const { error: unlinkError } = await supabase.from('supplier_project_links').delete().eq('supplier_id', id)
+        if (unlinkError) {
+            console.error('[deleteSupplier] Unlink Error:', unlinkError)
+        }
+
+        // 2. Perform deletion of the supplier
         const { error } = await supabase.from('suppliers').delete().eq('id', id)
-        return { error }
+
+        if (error) {
+            console.error('[deleteSupplier] Error:', error)
+            // If it's a constraint violation, fallback to pausing the supplier
+            if (error.code === '23503') {
+                const { error: fallbackError } = await supabase
+                    .from('suppliers')
+                    .update({ status: 'paused' })
+                    .eq('id', id)
+                if (fallbackError) return { error: fallbackError }
+                return { error: null }
+            }
+            return { error }
+        }
+
+        return { error: null }
     },
 
     async getSupplierProjectLinks(projectId: string): Promise<(SupplierProjectLink & { supplier: Supplier })[]> {
